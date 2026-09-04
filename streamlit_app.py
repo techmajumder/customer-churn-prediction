@@ -7,6 +7,8 @@ import joblib
 import numpy as np
 import pandas as pd
 import streamlit as st
+import shap
+import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="Customer Churn Predictor", page_icon="📉", layout="wide")
 
@@ -16,9 +18,23 @@ def load_model():
     encoders = joblib.load("outputs/encoders.joblib")
     with open("outputs/feature_names.json") as f:
         feature_names = json.load(f)
-    return model, encoders, feature_names
+    explainer = shap.TreeExplainer(model)
+    return model, encoders, feature_names, explainer
 
-model, encoders, FEATURE_NAMES = load_model()
+model, encoders, FEATURE_NAMES, explainer = load_model()
+
+
+def get_shap_explanation(X_row):
+    """Return top features pushing this specific customer toward/away from churn."""
+    shap_values = explainer.shap_values(X_row)
+    if isinstance(shap_values, list):
+        vals = shap_values[1][0]
+    elif isinstance(shap_values, np.ndarray) and shap_values.ndim == 3:
+        vals = shap_values[0, :, 1]
+    else:
+        vals = shap_values[0]
+    contrib = pd.Series(vals, index=FEATURE_NAMES).sort_values(key=abs, ascending=False)
+    return contrib.head(5)
 
 st.title("📉 Customer Churn Prediction")
 st.caption("Random Forest trained on the IBM Telco Customer Churn dataset (7,043 customers, 84.3% ROC-AUC)")
@@ -132,6 +148,15 @@ with tab2:
             st.success(f"🟢 Low Risk — {proba*100:.1f}% churn probability")
 
         st.progress(float(proba))
+
+        st.markdown("**Why this prediction — top factors for THIS customer:**")
+        contrib = get_shap_explanation(X)
+        fig, ax = plt.subplots(figsize=(6, 3))
+        colors = ['#d62728' if v > 0 else '#2ca02c' for v in contrib.values]
+        ax.barh(contrib.index[::-1], contrib.values[::-1], color=colors[::-1])
+        ax.set_xlabel("Push toward churn →   ← Push toward staying")
+        ax.axvline(0, color='black', linewidth=0.8)
+        st.pyplot(fig)
 
 st.divider()
 st.caption("Top churn drivers: contract type, tenure, and lack of tech support / online security add-ons.")
